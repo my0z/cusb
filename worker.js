@@ -116,26 +116,24 @@ function parsePpomppu(html) {
   return out;
 }
 
-// 2026-07 확인: mlbpark는 속성이 작은따옴표('). 제목 셀은
-// <td class='t_left ' id='list_숫자'>...</td> 안에 카테고리 태그 링크가 먼저 오고
-// 실제 제목 링크가 나중에 오므로, 셀 안의 "마지막" <a>를 제목으로 사용.
+// 2026-07 확인: mlbpark 셀 안 앵커 순서는 [카테고리, 제목, 댓글수([n])].
+// 댓글수가 없는 글도 있어 순서가 흔들릴 수 있으므로, "[숫자]" 형태(댓글수)만
+// 걸러내고 남은 마지막 앵커를 제목으로 사용.
 function parseMlbpark(html) {
   const out = [];
   const reTd = /<td class='t_left[^']*' id='list_\d+'>([\s\S]*?)<\/td>/g;
   let td;
   let count = 0;
   while ((td = reTd.exec(html)) !== null && count < 30) {
-    const anchors = [...td[1].matchAll(/<a[^>]*href='([^']+)'[^>]*>([\s\S]*?)<\/a>/g)];
+    const anchors = [...td[1].matchAll(/<a[^>]*href='([^']+)'[^>]*>([\s\S]*?)<\/a>/g)]
+      .map((a) => ({ href: a[1], text: a[2].replace(/<[^>]+>/g, '').trim() }))
+      .filter((a) => a.text && !/^\[\d+\]$/.test(a.text));
     if (!anchors.length) continue;
-    const last = anchors[anchors.length - 1];
-    const href = last[1];
-    const title = last[2].replace(/<[^>]+>/g, '').trim();
-    if (title) {
-      out.push(
-        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td style='background:#AFB5FA'>bl. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
-      );
-      count++;
-    }
+    const { href, text: title } = anchors[anchors.length - 1];
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td style='background:#AFB5FA'>bl. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
+    );
+    count++;
   }
   return out;
 }
