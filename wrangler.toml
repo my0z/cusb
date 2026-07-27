@@ -1,0 +1,14 @@
+name = "dashboard-worker"
+main = "dashboard-worker.js"
+compatibility_date = "2026-07-27"
+
+# KV 네임스페이스 바인딩. id 값은 아래 명령으로 직접 만든 뒤 채워 넣어야 함:
+#   npx wrangler kv namespace create DASH_KV
+# 실행하면 콘솔에 id가 출력됨 (그 값을 아래 id = "..." 에 붙여넣기)
+[[kv_namespaces]]
+binding = "DASH_KV"
+id = "여기에_kv_namespace_id_입력"
+
+# 1분마다 백그라운드에서 buildDashboard 실행 (scheduled 핸들러 트리거)
+[triggers]
+crons = ["* * * * *"]
