@@ -454,13 +454,17 @@ async function buildDashboard(env, forceFreshFinance = false) {
         const cnt = parsedCounts[k] != null ? parsedCounts[k] : '-';
         const status = d.error ? `에러:${d.error}` : `http${d.httpCode} ${d.bytes}bytes`;
         let row = `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
-        // 파싱 0건이면 실제 원문 앞부분을 그대로 보여줌 (코드/콘솔 없이도 마크업 확인용)
+        // 파싱 0건이면 실제 원문을 보여줌. head만 보이면 진단이 안 되므로
+        // 0%(head 확인용)/25%/50% 지점에서 각각 뽑아서 body 안쪽 목록 마크업도 보이게 함.
         if (cnt === 0 && boards[k]) {
-          const raw = boards[k]
-            .replace(/[\r\n\t]+/g, ' ')
-            .replace(/</g, '&lt;')
-            .slice(0, 400);
-          row += `<tr><td></td><td width=100% style="background:#333;color:#0f0;font-size:10px;font-family:monospace;word-break:break-all">${raw}</td></tr>\n`;
+          const clean = (s) => s.replace(/[\r\n\t]+/g, ' ').replace(/</g, '&lt;');
+          const total = boards[k].length;
+          const offsets = [0, Math.floor(total * 0.25), Math.floor(total * 0.5)];
+          offsets.forEach((off, i) => {
+            const chunk = clean(boards[k].slice(off, off + 350));
+            const label = i === 0 ? 'head' : `${Math.round((off / total) * 100)}%`;
+            row += `<tr><td style='font-size:10px;color:#999'>${label}</td><td width=100% style="background:#333;color:#0f0;font-size:10px;font-family:monospace;word-break:break-all">${chunk}</td></tr>\n`;
+          });
         }
         return row;
       })
