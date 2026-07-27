@@ -404,16 +404,21 @@ async function buildDashboard(env, forceFreshFinance = false) {
 
     // 게시판 통합
     let allList = [];
-    allList = allList.concat(parseSlrclub(boards.slrclub));
-    allList = allList.concat(parsePpomppu(boards.ppomppu));
-    allList = allList.concat(parseMlbpark(boards.mlbpark));
-    allList = allList.concat(parseBobaedream(boards.bobaedream));
-    allList = allList.concat(parseDdanzi(boards.ddanzi));
-    allList = allList.concat(parseTheqoo(boards.theqoo));
-    allList = allList.concat(parseCoinpan(boards.coinpan));
-    allList = allList.concat(parseClien(boards.clien));
-    allList = allList.concat(parseDcStock(boards.dcstock));
-    allList = allList.concat(parseGeekNews(boards.geeknews));
+    const parsedCounts = {};
+    const addBoard = (key, arr) => {
+      parsedCounts[key] = arr.length;
+      allList = allList.concat(arr);
+    };
+    addBoard('slrclub', parseSlrclub(boards.slrclub));
+    addBoard('ppomppu', parsePpomppu(boards.ppomppu));
+    addBoard('mlbpark', parseMlbpark(boards.mlbpark));
+    addBoard('bobaedream', parseBobaedream(boards.bobaedream));
+    addBoard('ddanzi', parseDdanzi(boards.ddanzi));
+    addBoard('theqoo', parseTheqoo(boards.theqoo));
+    addBoard('coinpan', parseCoinpan(boards.coinpan));
+    addBoard('clien', parseClien(boards.clien));
+    addBoard('dcstock', parseDcStock(boards.dcstock));
+    addBoard('geeknews', parseGeekNews(boards.geeknews));
     shuffle(allList);
 
     const debugAll = { ...financeDebug, ...boardDebug };
@@ -423,6 +428,18 @@ async function buildDashboard(env, forceFreshFinance = false) {
           `[${k}] http=${v.httpCode} error=${v.error || ''} bytes=${v.bytes} url=${v.url}`
       )
       .join('\n');
+
+    // 화면에서 코드/콘솔을 못 볼 때도 바로 보이도록, 게시판별 상태를
+    // 목록 맨 위에 실제 <tr> 행으로 깔아둠 (bytes/파싱개수/에러 확인용).
+    // 정상화되면 이 블록은 지워도 됨.
+    const debugRowsHtml = Object.keys(boardUrls)
+      .map((k) => {
+        const d = boardDebug[k] || {};
+        const cnt = parsedCounts[k] != null ? parsedCounts[k] : '-';
+        const status = d.error ? `에러:${d.error}` : `http${d.httpCode} ${d.bytes}bytes`;
+        return `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
+      })
+      .join('');
 
     // 플로팅 박스용 데이터
     // - financeItemsJson: 클라이언트 스크립트에 그대로 심을 JS 배열 리터럴.
@@ -562,6 +579,7 @@ return false;
 		<a href="javascript:window.location.reload(true);" style='background:blue;color:#fff;padding:15px'>리로드</a>
 	</div>
 <table border=0 cellpadding=0 cellspacing=0 width=100%>
+${debugRowsHtml}
 ${allList.join('')}
 </table>
 <!-- DASH_DEBUG
