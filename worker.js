@@ -22,12 +22,14 @@ const CACHE_TTL = 300; // 5분
 
 async function fetchText(url, encoding = 'utf-8') {
   try {
+    const origin = new URL(url).origin;
     const res = await fetch(url, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        Referer: origin + '/',
       },
       cf: { cacheTtl: CACHE_TTL, cacheEverything: true },
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -209,56 +211,68 @@ function parseCoinpan(html) {
 // (class="list_subject" 제목링크, class="list_time" 작성시각) 기준 작성함.
 // 배포 후 DASH_DEBUG에서 bytes>0인데 항목이 안 뜨면 실제 마크업이 달라진 것이므로
 // 클리앙 서버 응답을 직접 확인해 정규식을 맞춰야 함.
-function parseClien(html) {
+// 클리앙 새로운소식 (IT/과학 뉴스 전용 게시판)
+// 2026-07 확인: 실제 응답에서 list_subject 클래스는 더 이상 없고,
+// href="/service/board/news/19197895?od=T31&po=0&category=0&groupCd=" 형태만 확인됨.
+// 댓글수 링크는 같은 href 뒤에 #comment-point 가 붙으므로 [^"#]* 로 제외.
+function parseClienBoard(html, boardPath, prefix, bg) {
   const out = [];
-  const re = /<a[^>]*href="(\/service\/board\/news\/\d+[^"]*)"[^>]*class="[^"]*list_subject[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
+  const re = new RegExp(`<a[^>]*href="(/service/board/${boardPath}/\\d+\\?[^"#]*)"[^>]*>([\\s\\S]*?)</a>`, 'g');
   let mm;
   let count = 0;
+  const seen = new Set();
   while ((mm = re.exec(html)) !== null && count < 30) {
     const href = mm[1];
     const title = mm[2].replace(/<[^>]+>/g, '').trim();
-    if (title) {
+    if (title && !seen.has(href)) {
+      seen.add(href);
       out.push(
-        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style="background:#C4E3D3">cl. <a target=_blank href="https://www.clien.net${href}">${title}</a></td></tr>\n`
+        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style="background:${bg}">${prefix}. <a target=_blank href="https://www.clien.net${href}">${title}</a></td></tr>\n`
       );
       count++;
     }
   }
   return out;
 }
+function parseClien(html) {
+  return parseClienBoard(html, 'news', 'cl', '#C4E3D3');
+}
+// 클리앙 소모임 "주식한당" (주식/재테크)
+function parseClienStock(html) {
+  return parseClienBoard(html, 'cm_stock', 'jj', '#FFD8A8');
+}
 
-// 디시인사이드 주식 갤러리 (주식/재테크)
-// 주의: 실제 마크업을 직접 확인하지 못한 상태로 일반적인 DC인사이드 리스트 패턴
-// (tr class="ub-content us-post" > td class="gall_tit ub-word" > a) 기준 작성함.
-// 배포 후 DASH_DEBUG에서 bytes>0인데 항목이 안 뜨면 실제 마크업이 달라진 것이므로
-// 확인 후 정규식을 맞춰야 함.
-function parseDcStock(html) {
+// 디시인사이드 한국 주식 마이너 갤러리 (m.dcinside.com/board/krstock)
+// 주의: DC인사이드는 이 프로젝트의 web_fetch 도구로도 빈 응답만 돌아와 실제 마크업을
+// 확인하지 못함(봇 차단 추정). 그래서 클래스명에 의존하지 않고, 검색 결과로 실존이
+// 확인된 href 패턴(/board/krstock/숫자)만으로 매칭 — class가 바뀌어도 안 깨지도록.
+// 그래도 0건이면 목록 위 디버그의 원문 스니펫(초록 글씨)을 확인해서 알려줄 것.
+function parseKrStock(html) {
   const out = [];
-  const re = /<tr class="ub-content us-post"[\s\S]*?<td class="gall_tit ub-word">([\s\S]*?)<\/td>/g;
+  const re = /<a[^>]*href="(\/board\/krstock\/\d+)(?:\?[^"]*)?"[^>]*>([\s\S]*?)<\/a>/g;
   let mm;
   let count = 0;
+  const seen = new Set();
   while ((mm = re.exec(html)) !== null && count < 30) {
-    const cell = mm[1];
-    const link = cell.match(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
-    if (!link) continue;
-    const href = link[1].startsWith('http') ? link[1] : `https://gall.dcinside.com${link[1]}`;
-    const title = link[2].replace(/<[^>]+>/g, '').trim();
-    if (title) {
-      out.push(
-        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#FFD8A8;color:#1a1a1a'>dc. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
-      );
-      count++;
-    }
+    const path = mm[1];
+    if (seen.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    // 썸네일/댓글수 링크(텍스트 없거나 숫자만) 제외
+    if (!title || /^\d+$/.test(title)) continue;
+    seen.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#B5EAD7;color:#1a1a1a'>ks. <a style=color:#1a1a1a target=_blank href="https://m.dcinside.com${path}">${title}</a></td></tr>\n`
+    );
+    count++;
   }
   return out;
 }
 
-// GeekNews (news.hada.io) - IT/개발자 커뮤니티, Hacker News 클론 마크업 기준
-// 주의: 실제 마크업을 직접 확인하지 못한 상태로 일반적인 HN 계열 패턴
-// (span class="titleline" > a) 기준 작성함. 배포 후 확인 필요.
+// GeekNews (news.hada.io) - IT/개발자 커뮤니티, Hacker News 계열(Arc) 마크업 기준
+// span과 a 태그 사이 공백/속성 순서 차이에 대비해 관대하게 매칭.
 function parseGeekNews(html) {
   const out = [];
-  const re = /<span class="titleline"><a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const re = /<span class="titleline">\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   let mm;
   let count = 0;
   while ((mm = re.exec(html)) !== null && count < 30) {
@@ -392,8 +406,9 @@ async function buildDashboard(env, forceFreshFinance = false) {
       theqoo: 'https://theqoo.net/total',
       coinpan: 'https://coinpan.com/free',
       clien: 'https://www.clien.net/service/board/news',
-      dcstock: 'https://gall.dcinside.com/board/lists/?id=stock_new1',
+      clienstock: 'https://www.clien.net/service/board/cm_stock',
       geeknews: 'https://news.hada.io/',
+      krstock: 'https://m.dcinside.com/board/krstock',
     };
 
     // 게시판은 지금처럼 매 Cron마다 새로 받음.
@@ -417,8 +432,9 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('theqoo', parseTheqoo(boards.theqoo));
     addBoard('coinpan', parseCoinpan(boards.coinpan));
     addBoard('clien', parseClien(boards.clien));
-    addBoard('dcstock', parseDcStock(boards.dcstock));
+    addBoard('clienstock', parseClienStock(boards.clienstock));
     addBoard('geeknews', parseGeekNews(boards.geeknews));
+    addBoard('krstock', parseKrStock(boards.krstock));
     shuffle(allList);
 
     const debugAll = { ...financeDebug, ...boardDebug };
@@ -437,7 +453,16 @@ async function buildDashboard(env, forceFreshFinance = false) {
         const d = boardDebug[k] || {};
         const cnt = parsedCounts[k] != null ? parsedCounts[k] : '-';
         const status = d.error ? `에러:${d.error}` : `http${d.httpCode} ${d.bytes}bytes`;
-        return `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
+        let row = `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
+        // 파싱 0건이면 실제 원문 앞부분을 그대로 보여줌 (코드/콘솔 없이도 마크업 확인용)
+        if (cnt === 0 && boards[k]) {
+          const raw = boards[k]
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/</g, '&lt;')
+            .slice(0, 400);
+          row += `<tr><td></td><td width=100% style="background:#333;color:#0f0;font-size:10px;font-family:monospace;word-break:break-all">${raw}</td></tr>\n`;
+        }
+        return row;
       })
       .join('');
 
