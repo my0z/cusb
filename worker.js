@@ -89,7 +89,7 @@ function parseSlrclub(html) {
       .replace('<td class="sbj">', '<td height=40px>')
       .replace(/a href="\/bbs\//g, "a style=color:red target='_blank' href=\"");
     const link = block.match(/<a style=color:red target[\s\S]*?<\/a>/);
-    const linkHtml = link ? link[0].replace(' style=color:red', ' style=color:white') : '';
+    const linkHtml = link ? link[0].replace(' style=color:red', ' style=color:#1a1a1a') : '';
     const date = dates[x] ? dates[x][1] : '';
     out.push(
       `<tr><td height=35><div style=width:0px;overflow:hidden>${date}</div></td><td width=100% style='background:#e49ca1'>sl. ${linkHtml}</td></tr>\n`
@@ -121,7 +121,7 @@ function parseMlbpark(html) {
   let a = 3;
   for (let x = 6; x <= 29 && x < rows.length; x++) {
     let block = rows[x][1]
-      .replace("<a href='", "bl. <a style=color:FFF target='_blank' href='")
+      .replace("<a href='", "bl. <a style=color:#1a1a1a target='_blank' href='")
       .replace(/\.png/g, '');
     if (block) {
       const date = dates[a] ? dates[a][1] : '';
