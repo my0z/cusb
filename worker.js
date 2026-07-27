@@ -227,6 +227,54 @@ function parseClien(html) {
   return out;
 }
 
+// 디시인사이드 주식 갤러리 (주식/재테크)
+// 주의: 실제 마크업을 직접 확인하지 못한 상태로 일반적인 DC인사이드 리스트 패턴
+// (tr class="ub-content us-post" > td class="gall_tit ub-word" > a) 기준 작성함.
+// 배포 후 DASH_DEBUG에서 bytes>0인데 항목이 안 뜨면 실제 마크업이 달라진 것이므로
+// 확인 후 정규식을 맞춰야 함.
+function parseDcStock(html) {
+  const out = [];
+  const re = /<tr class="ub-content us-post"[\s\S]*?<td class="gall_tit ub-word">([\s\S]*?)<\/td>/g;
+  let mm;
+  let count = 0;
+  while ((mm = re.exec(html)) !== null && count < 30) {
+    const cell = mm[1];
+    const link = cell.match(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+    if (!link) continue;
+    const href = link[1].startsWith('http') ? link[1] : `https://gall.dcinside.com${link[1]}`;
+    const title = link[2].replace(/<[^>]+>/g, '').trim();
+    if (title) {
+      out.push(
+        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#FFD8A8;color:#1a1a1a'>dc. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
+      );
+      count++;
+    }
+  }
+  return out;
+}
+
+// GeekNews (news.hada.io) - IT/개발자 커뮤니티, Hacker News 클론 마크업 기준
+// 주의: 실제 마크업을 직접 확인하지 못한 상태로 일반적인 HN 계열 패턴
+// (span class="titleline" > a) 기준 작성함. 배포 후 확인 필요.
+function parseGeekNews(html) {
+  const out = [];
+  const re = /<span class="titleline"><a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count = 0;
+  while ((mm = re.exec(html)) !== null && count < 30) {
+    let href = mm[1];
+    if (href.startsWith('/')) href = `https://news.hada.io${href}`;
+    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+    if (title) {
+      out.push(
+        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#A8D8FF;color:#1a1a1a'>gn. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
+      );
+      count++;
+    }
+  }
+  return out;
+}
+
 // 우측 상단 박스(코스피~미세먼지, investing.com + 휘발유 + 미세먼지)는 전부 묶어서
 // 하루 8번 정도(=3시간에 한 번)만 새로 받아오도록 캐시. 게시판만 지금처럼
 // Cron 주기(10분)마다 그대로 갱신.
@@ -344,6 +392,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
       theqoo: 'https://theqoo.net/total',
       coinpan: 'https://coinpan.com/free',
       clien: 'https://www.clien.net/service/board/news',
+      dcstock: 'https://gall.dcinside.com/board/lists/?id=stock_new1',
+      geeknews: 'https://news.hada.io/',
     };
 
     // 게시판은 지금처럼 매 Cron마다 새로 받음.
@@ -362,6 +412,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
     allList = allList.concat(parseTheqoo(boards.theqoo));
     allList = allList.concat(parseCoinpan(boards.coinpan));
     allList = allList.concat(parseClien(boards.clien));
+    allList = allList.concat(parseDcStock(boards.dcstock));
+    allList = allList.concat(parseGeekNews(boards.geeknews));
     shuffle(allList);
 
     const debugAll = { ...financeDebug, ...boardDebug };
