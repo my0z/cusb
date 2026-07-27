@@ -116,22 +116,22 @@ function parsePpomppu(html) {
   return out;
 }
 
+// 2026-07 확인: mlbpark는 속성이 작은따옴표('). 제목 셀은
+// <td class='t_left ' id='list_숫자'><a href='...'>제목</a> 형태.
 function parseMlbpark(html) {
-  const dates = [...html.matchAll(/<span class='date'>([\s\S]*?)<\/span>/g)];
-  const rows = [...html.matchAll(/<td class='t_left' ([\s\S]*?)<\/td>/g)];
   const out = [];
-  let a = 3;
-  for (let x = 6; x <= 29 && x < rows.length; x++) {
-    let block = rows[x][1]
-      .replace("<a href='", "bl. <a style=color:#1a1a1a target='_blank' href='")
-      .replace(/\.png/g, '');
-    if (block) {
-      const date = dates[a] ? dates[a][1] : '';
+  const re = /<td class='t_left[^']*' id='list_\d+'>\s*<a href='([^']+)'[^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count = 0;
+  while ((mm = re.exec(html)) !== null && count < 30) {
+    const href = mm[1];
+    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+    if (title) {
       out.push(
-        `<tr><td height=35><div style=width:0px;overflow:hidden>${date}</div></td><td style=background:#AFB5FA><a ${block}</td></tr>\n`
+        `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td style='background:#AFB5FA'>bl. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
       );
+      count++;
     }
-    a++;
   }
   return out;
 }
@@ -242,14 +242,11 @@ function parseClienStock(html) {
   return parseClienBoard(html, 'cm_stock', 'jj', '#FFD8A8');
 }
 
-// 디시인사이드 한국 주식 마이너 갤러리 (m.dcinside.com/board/krstock)
-// 주의: DC인사이드는 이 프로젝트의 web_fetch 도구로도 빈 응답만 돌아와 실제 마크업을
-// 확인하지 못함(봇 차단 추정). 그래서 클래스명에 의존하지 않고, 검색 결과로 실존이
-// 확인된 href 패턴(/board/krstock/숫자)만으로 매칭 — class가 바뀌어도 안 깨지도록.
-// 그래도 0건이면 목록 위 디버그의 원문 스니펫(초록 글씨)을 확인해서 알려줄 것.
+// 2026-07 확인: 실제 글 링크는 /board/krstock/숫자 가 아니라
+// /mgallery/board/view/?id=krstock&no=숫자 형태.
 function parseKrStock(html) {
   const out = [];
-  const re = /<a[^>]*href="(\/board\/krstock\/\d+)(?:\?[^"]*)?"[^>]*>([\s\S]*?)<\/a>/g;
+  const re = /<a[^>]*href="(\/mgallery\/board\/view\/\?id=krstock&no=\d+[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
   let mm;
   let count = 0;
   const seen = new Set();
@@ -257,27 +254,26 @@ function parseKrStock(html) {
     const path = mm[1];
     if (seen.has(path)) continue;
     const title = mm[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-    // 썸네일/댓글수 링크(텍스트 없거나 숫자만) 제외
     if (!title || /^\d+$/.test(title)) continue;
     seen.add(path);
     out.push(
-      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#B5EAD7;color:#1a1a1a'>ks. <a style=color:#1a1a1a target=_blank href="https://m.dcinside.com${path}">${title}</a></td></tr>\n`
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#B5EAD7;color:#1a1a1a'>ks. <a style=color:#1a1a1a target=_blank href="https://gall.dcinside.com${path}">${title}</a></td></tr>\n`
     );
     count++;
   }
   return out;
 }
 
-// GeekNews (news.hada.io) - IT/개발자 커뮤니티, Hacker News 계열(Arc) 마크업 기준
-// span과 a 태그 사이 공백/속성 순서 차이에 대비해 관대하게 매칭.
+// 2026-07 확인: 속성이 작은따옴표('). 제목은
+// <a href='...'><h2 class='topic-title-heading'>제목</h2></a> 형태.
 function parseGeekNews(html) {
   const out = [];
-  const re = /<span class="titleline">\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const re = /<a href='([^']+)'[^>]*><h2 class='topic-title-heading'>([\s\S]*?)<\/h2>/g;
   let mm;
   let count = 0;
   while ((mm = re.exec(html)) !== null && count < 30) {
     let href = mm[1];
-    if (href.startsWith('/')) href = `https://news.hada.io${href}`;
+    if (!href.startsWith('http')) href = `https://news.hada.io/${href}`;
     const title = mm[2].replace(/<[^>]+>/g, '').trim();
     if (title) {
       out.push(
