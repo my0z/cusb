@@ -407,7 +407,10 @@ body { margin:0px; font-weight:normal; font-size:18px; }
 #floatdiv { position:fixed; height:30px; right:0px; display:inline-block; top:10px; background-color: transparent; margin:0; text-align:right; }
 a, table {font-family: 'Nanum Gothic', sans-serif;}
 #financeCollapsed { min-height:20px; }
-#financeExpanded { background:rgba(255,255,255,0.9); padding:4px; border-radius:4px; }
+#financeExpanded { background:transparent; padding:4px; }
+#floatdiv, #floatdiv a, #floatdiv font, #floatdiv div {
+  text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff;
+}
 </style>
 <div id="floatdiv">
 <a id="clock" style="height:24px;font-weight:normal;color:red;font-weight:bold">00:00</a><BR>
