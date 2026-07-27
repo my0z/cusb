@@ -117,15 +117,19 @@ function parsePpomppu(html) {
 }
 
 // 2026-07 확인: mlbpark는 속성이 작은따옴표('). 제목 셀은
-// <td class='t_left ' id='list_숫자'><a href='...'>제목</a> 형태.
+// <td class='t_left ' id='list_숫자'>...</td> 안에 카테고리 태그 링크가 먼저 오고
+// 실제 제목 링크가 나중에 오므로, 셀 안의 "마지막" <a>를 제목으로 사용.
 function parseMlbpark(html) {
   const out = [];
-  const re = /<td class='t_left[^']*' id='list_\d+'>\s*<a href='([^']+)'[^>]*>([\s\S]*?)<\/a>/g;
-  let mm;
+  const reTd = /<td class='t_left[^']*' id='list_\d+'>([\s\S]*?)<\/td>/g;
+  let td;
   let count = 0;
-  while ((mm = re.exec(html)) !== null && count < 30) {
-    const href = mm[1];
-    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+  while ((td = reTd.exec(html)) !== null && count < 30) {
+    const anchors = [...td[1].matchAll(/<a[^>]*href='([^']+)'[^>]*>([\s\S]*?)<\/a>/g)];
+    if (!anchors.length) continue;
+    const last = anchors[anchors.length - 1];
+    const href = last[1];
+    const title = last[2].replace(/<[^>]+>/g, '').trim();
     if (title) {
       out.push(
         `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td style='background:#AFB5FA'>bl. <a style=color:#1a1a1a target=_blank href="${href}">${title}</a></td></tr>\n`
