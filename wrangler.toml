@@ -1,5 +1,5 @@
 name = "dashboard-worker"
-main = "dashboard-worker.js"
+main = "worker.js"
 compatibility_date = "2026-07-27"
 
 # KV 네임스페이스 바인딩. id 값은 아래 명령으로 직접 만든 뒤 채워 넣어야 함:
