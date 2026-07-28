@@ -467,6 +467,150 @@ async function getFinanceData(env, forceFresh) {
   return { items, debug: finDebug };
 }
 
+// ===================== 핫이슈 누적 + AI 요약 =====================
+// 동작: 30분마다 그 시점 제목 목록을 KV에 스냅샷 저장 → 6시간치가 쌓이면
+// 2시간에 한 번 AI가 "지금 여러 게시판에 걸쳐 반복 등장하는 진짜 핫이슈"를
+// 뽑아서 요약(+ 관련 종목 추정)해 KV에 저장. 화면 상단엔 그 결과만 표시.
+// (완전 속보/단발성 글은 어차피 아래 실시간 리스트에서 보이므로 여기선 안 다룸)
+const HOT_SNAP_PREFIX = 'hotsnap:';
+const HOT_SNAP_RETAIN_MS = 6 * 60 * 60 * 1000; // 스냅샷 보관 6시간
+const HOT_SNAP_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 스냅샷
+const HOT_SUMMARY_KEY = 'hot_topics_v1';
+const HOT_SUMMARY_META_KEY = 'hot_topics_last_run';
+const HOT_SUMMARY_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간마다 AI 요약
+
+function extractTitlesFromList(allList) {
+  const joined = allList.join('');
+  const matches = [...joined.matchAll(/<a[^>]*target=_blank[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/g)];
+  const seen = new Set();
+  const out = [];
+  for (const m of matches) {
+    const t = m[1].replace(/<[^>]+>/g, '').trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+// 30분 단위 정각에만 실제로 저장 (Cron이 그보다 자주 돌아도 과도하게 안 쌓임)
+async function maybeSaveHotSnapshot(env, allList) {
+  if (!env.DASH_KV) return;
+  const now = Date.now();
+  const bucket = Math.floor(now / HOT_SNAP_INTERVAL_MS);
+  const lastBucketRaw = await env.DASH_KV.get('hotsnap_last_bucket');
+  if (lastBucketRaw && Number(lastBucketRaw) === bucket) return;
+
+  const titles = extractTitlesFromList(allList);
+  if (!titles.length) return;
+
+  await env.DASH_KV.put(`${HOT_SNAP_PREFIX}${now}`, JSON.stringify(titles), {
+    expirationTtl: Math.ceil(HOT_SNAP_RETAIN_MS / 1000) + 600,
+  });
+  await env.DASH_KV.put('hotsnap_last_bucket', String(bucket));
+
+  // 6시간 지난 스냅샷 정리 (KV 무료 티어 quota 보호 - 예전에 겪은 문제 재발 방지)
+  const list = await env.DASH_KV.list({ prefix: HOT_SNAP_PREFIX });
+  const cutoff = now - HOT_SNAP_RETAIN_MS;
+  for (const key of list.keys) {
+    const ts = Number(key.name.slice(HOT_SNAP_PREFIX.length));
+    if (ts && ts < cutoff) {
+      await env.DASH_KV.delete(key.name);
+    }
+  }
+}
+
+// 2시간에 한 번, 누적된 스냅샷 전체를 묶어 AI에게 "핫이슈 Top5 + 관련종목" 요청.
+// env.AI (Workers AI) 바인딩이 없으면 조용히 스킵.
+async function maybeSummarizeHotTopics(env) {
+  if (!env.DASH_KV || !env.AI) return;
+  const now = Date.now();
+  const lastRunRaw = await env.DASH_KV.get(HOT_SUMMARY_META_KEY);
+  if (lastRunRaw && now - Number(lastRunRaw) < HOT_SUMMARY_INTERVAL_MS) return;
+
+  const list = await env.DASH_KV.list({ prefix: HOT_SNAP_PREFIX });
+  if (!list.keys.length) return;
+
+  const allTitles = [];
+  for (const key of list.keys) {
+    const raw = await env.DASH_KV.get(key.name);
+    if (!raw) continue;
+    try {
+      allTitles.push(...JSON.parse(raw));
+    } catch (e) {
+      /* 손상된 스냅샷은 무시 */
+    }
+  }
+  if (allTitles.length < 20) return; // 아직 데이터 부족
+
+  const prompt = `다음은 최근 몇 시간 동안 한국 여러 커뮤니티/주식 게시판에 올라온 글 제목 목록이다.
+같은 이슈를 다루는 제목들을 하나로 묶어서, 지금 가장 화제가 되는 주제 상위 5개를 뽑아라.
+
+각 주제마다:
+- topic: 주제를 한 줄로 (10~20자)
+- reason: 왜 화제인지 한 줄 요약
+- stocks: 이 주제와 직접 관련된 국내/미국 상장 종목명이 있으면 배열로 (억지로 끼워맞추지 말고, 없으면 빈 배열)
+
+아래 JSON 배열 형식으로만 답하라. 다른 설명은 절대 넣지 마라.
+[{"topic":"...","reason":"...","stocks":["...","..."]}]
+
+제목 목록:
+${allTitles.slice(0, 400).join('\n')}`;
+
+  try {
+    const res = await env.AI.run('@cf/meta/llama-3.3-70b-instruct', {
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 900,
+    });
+    const raw = (res.response || '').trim();
+    const jsonStr = raw.replace(/^```json\s*|```\s*$/g, '').trim();
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed) && parsed.length) {
+      await env.DASH_KV.put(HOT_SUMMARY_KEY, JSON.stringify({ items: parsed, generatedAt: now }));
+    }
+  } catch (e) {
+    // AI 응답 파싱 실패 시 기존 캐시된 요약은 그대로 두고 다음 사이클에 재시도
+  } finally {
+    // 실패하더라도 다음 사이클까지 텀은 유지 (같은 실패를 매분 반복 호출하지 않도록)
+    await env.DASH_KV.put(HOT_SUMMARY_META_KEY, String(now));
+  }
+}
+
+// 화면 최상단에 보여줄 핫이슈 박스 HTML
+async function renderHotTopicsBox(env) {
+  if (!env.DASH_KV) return '';
+  const raw = await env.DASH_KV.get(HOT_SUMMARY_KEY);
+  if (!raw) return '';
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    return '';
+  }
+  if (!data || !Array.isArray(data.items) || !data.items.length) return '';
+
+  const ago = Math.max(0, Math.round((Date.now() - data.generatedAt) / 60000));
+  const rows = data.items
+    .map((it, i) => {
+      const stocksHtml =
+        it.stocks && it.stocks.length
+          ? `<div style="margin-top:4px;font-size:13px;color:#0a7a3d;">📈 관련종목: ${it.stocks.join(', ')}</div>`
+          : '';
+      return `<div style="padding:10px 14px;border-bottom:1px solid rgba(0,0,0,0.08);">
+        <div style="font-weight:bold;font-size:16px;color:#111;">${i + 1}. ${it.topic}</div>
+        <div style="font-size:13px;color:#555;margin-top:2px;">${it.reason}</div>
+        ${stocksHtml}
+      </div>`;
+    })
+    .join('');
+
+  return `<div style="margin:8px;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+    <div style="background:#222;color:#fff;padding:8px 14px;font-weight:bold;font-size:14px;">🔥 지금 가장 뜨거운 주제 (${ago}분 전 기준)</div>
+    ${rows}
+  </div>`;
+}
+
 async function buildDashboard(env, forceFreshFinance = false) {
     const boardUrls = {
       slrclub: 'http://www.slrclub.com/bbs/zboard.php?id=free',
@@ -511,6 +655,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('jungletalk', parseJungleTalk(boards.jungletalk));
     addBoard('dcdesign', parseDcDesign(boards.dcdesign));
     shuffle(allList);
+    await maybeSaveHotSnapshot(env, allList);
+    const hotTopicsHtml = await renderHotTopicsBox(env);
 
     const debugAll = { ...financeDebug, ...boardDebug };
     const debugHtml = Object.entries(debugAll)
@@ -657,6 +803,7 @@ return false;
 		<a href="?live=1" style='background:#e63946;color:#fff;padding:15px' target=_blank>실시간</a>
 		<a href="javascript:window.location.reload(true);" style='background:blue;color:#fff;padding:15px'>리로드</a>
 	</div>
+${hotTopicsHtml}
 <table border=0 cellpadding=0 cellspacing=0 width=100%>
 ${allList.join('')}
 </table>
@@ -738,6 +885,8 @@ export default {
         if (env.DASH_KV) {
           await env.DASH_KV.put(KV_KEY, html, { expirationTtl: KV_TTL_SECONDS });
         }
+        // AI 요약은 사용자 요청 경로에 안 넣고 여기(크론)에서만 시도 - 지연 방지
+        await maybeSummarizeHotTopics(env);
       })()
     );
   },
