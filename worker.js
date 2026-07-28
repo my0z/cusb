@@ -339,6 +339,29 @@ function parseKrStock(html) {
   return out;
 }
 
+// OKKY 커뮤니티 (okky.kr/community) - 국내 최대 개발자 커뮤니티
+// 서버렌더링 확인됨. 글 링크는 /articles/숫자?topic=community 또는
+// /spaces/스페이스명/숫자?topic=community 형태.
+function parseOkky(html) {
+  const out = [];
+  const re = /href=["'](?:https?:\/\/okky\.kr)?(\/(?:articles|spaces\/[^\/"']+)\/\d+\?topic=community)["'][^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count = 0;
+  const seen = new Set();
+  while ((mm = re.exec(html)) !== null && count < 30) {
+    const path = mm[1];
+    if (seen.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+    if (!title) continue;
+    seen.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#BFD7EA;color:#1a1a1a'>ok. <a style=color:#1a1a1a target=_blank href="https://okky.kr${path}">${title}</a></td></tr>\n`
+    );
+    count++;
+  }
+  return out;
+}
+
 // 2026-07 확인: 속성이 작은따옴표('). 제목은
 // <a href='...'><h2 class='topic-title-heading'>제목</h2></a> 형태.
 function parseGeekNews(html) {
@@ -621,6 +644,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
       clien: 'https://www.clien.net/service/board/news',
       clienstock: 'https://www.clien.net/service/board/cm_stock',
       geeknews: 'https://news.hada.io/',
+      okky: 'https://okky.kr/community',
       krstock: 'https://m.dcinside.com/board/krstock',
       paxnet: 'http://www.paxnet.co.kr/tbbs/list?tbbsType=L&id=N00801',
       neostock: 'https://m.dcinside.com/board/neostock',
@@ -649,6 +673,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('clien', parseClien(boards.clien));
     addBoard('clienstock', parseClienStock(boards.clienstock));
     addBoard('geeknews', parseGeekNews(boards.geeknews));
+    addBoard('okky', parseOkky(boards.okky));
     addBoard('krstock', parseKrStock(boards.krstock));
     addBoard('paxnet', parsePaxnet(boards.paxnet));
     addBoard('neostock', parseDcNeostock(boards.neostock));
