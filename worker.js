@@ -318,6 +318,27 @@ function parseDcDesign(html) {
   }
   return out;
 }
+
+// 디시인사이드 프로그래밍 갤러리 (id=programming) - 메이저 갤러리
+function parseDcProgramming(html) {
+  const out = [];
+  const re = /<a[^>]*href="((?:\/mgallery)?\/board\/view\/\?id=programming&no=\d+[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count4 = 0;
+  const seen4 = new Set();
+  while ((mm = re.exec(html)) !== null && count4 < 30) {
+    const path = mm[1];
+    if (seen4.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (!title || /^\d+$/.test(title)) continue;
+    seen4.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#D6E5FA;color:#1a1a1a'>pg. <a style=color:#1a1a1a target=_blank href="https://gall.dcinside.com${path}">${title}</a></td></tr>\n`
+    );
+    count4++;
+  }
+  return out;
+}
 // /mgallery/board/view/?id=krstock&no=숫자 형태.
 function parseKrStock(html) {
   const out = [];
@@ -650,6 +671,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
       neostock: 'https://m.dcinside.com/board/neostock',
       jungletalk: 'https://www.jungle.co.kr/community/talktalk',
       dcdesign: 'https://m.dcinside.com/board/design',
+      dcprogramming: 'https://m.dcinside.com/board/programming',
     };
 
     // 게시판은 지금처럼 매 Cron마다 새로 받음.
@@ -679,6 +701,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('neostock', parseDcNeostock(boards.neostock));
     addBoard('jungletalk', parseJungleTalk(boards.jungletalk));
     addBoard('dcdesign', parseDcDesign(boards.dcdesign));
+    addBoard('dcprogramming', parseDcProgramming(boards.dcprogramming));
     shuffle(allList);
     await maybeSaveHotSnapshot(env, allList);
     const hotTopicsHtml = await renderHotTopicsBox(env);
