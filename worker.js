@@ -289,6 +289,49 @@ function parseDcNeostock(html) {
   }
   return out;
 }
+
+// 디자인정글 정글톡톡 (jungle.co.kr/community/talktalk) - 디자이너 커뮤니티
+// 서버렌더링 확인됨. 글 링크는 /community/숫자 형태.
+function parseJungleTalk(html) {
+  const out = [];
+  const re = /href=["'](?:https?:\/\/www\.jungle\.co\.kr)?(\/community\/\d+)["'][^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count2 = 0;
+  const seen2 = new Set();
+  while ((mm = re.exec(html)) !== null && count2 < 30) {
+    const path = mm[1];
+    if (seen2.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+    if (!title) continue;
+    seen2.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#FDE8B0;color:#1a1a1a'>jg. <a style=color:#1a1a1a target=_blank href="https://www.jungle.co.kr${path}">${title}</a></td></tr>\n`
+    );
+    count2++;
+  }
+  return out;
+}
+
+// 디시인사이드 디자인,일러스트 갤러리 (id=design) - 메이저 갤러리
+function parseDcDesign(html) {
+  const out = [];
+  const re = /<a[^>]*href="((?:\/mgallery)?\/board\/view\/\?id=design&no=\d+[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count3 = 0;
+  const seen3 = new Set();
+  while ((mm = re.exec(html)) !== null && count3 < 30) {
+    const path = mm[1];
+    if (seen3.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (!title || /^\d+$/.test(title)) continue;
+    seen3.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#E8C4E8;color:#1a1a1a'>dg. <a style=color:#1a1a1a target=_blank href="https://gall.dcinside.com${path}">${title}</a></td></tr>\n`
+    );
+    count3++;
+  }
+  return out;
+}
 // /mgallery/board/view/?id=krstock&no=숫자 형태.
 function parseKrStock(html) {
   const out = [];
@@ -452,6 +495,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
       krstock: 'https://m.dcinside.com/board/krstock',
       paxnet: 'http://www.paxnet.co.kr/tbbs/list?tbbsType=L&id=N00801',
       neostock: 'https://m.dcinside.com/board/neostock',
+      jungletalk: 'https://www.jungle.co.kr/community/talktalk',
+      dcdesign: 'https://m.dcinside.com/board/design',
     };
 
     // 게시판은 지금처럼 매 Cron마다 새로 받음.
@@ -479,6 +524,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('krstock', parseKrStock(boards.krstock));
     addBoard('paxnet', parsePaxnet(boards.paxnet));
     addBoard('neostock', parseDcNeostock(boards.neostock));
+    addBoard('jungletalk', parseJungleTalk(boards.jungletalk));
+    addBoard('dcdesign', parseDcDesign(boards.dcdesign));
     shuffle(allList);
 
     const debugAll = { ...financeDebug, ...boardDebug };
@@ -488,6 +535,28 @@ async function buildDashboard(env, forceFreshFinance = false) {
           `[${k}] http=${v.httpCode} error=${v.error || ''} bytes=${v.bytes} url=${v.url}`
       )
       .join('\n');
+
+    // TEMP: 화면에서 바로 진단하기 위해 dbg 행을 목록 상단에 노출.
+    // 확인 끝나면 이 블록 지울 것.
+    const debugRowsHtml = Object.keys(boardUrls)
+      .map((k) => {
+        const d = boardDebug[k] || {};
+        const cnt = parsedCounts[k] != null ? parsedCounts[k] : '-';
+        const status = d.error ? `에러:${d.error}` : `http${d.httpCode} ${d.bytes}bytes`;
+        let row = `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
+        if (cnt === 0 && boards[k]) {
+          const clean = (s) => s.replace(/[\r\n\t]+/g, ' ').replace(/</g, '&lt;');
+          const total = boards[k].length;
+          const offsets = [0, Math.floor(total * 0.25), Math.floor(total * 0.5)];
+          offsets.forEach((off, i) => {
+            const chunk = clean(boards[k].slice(off, off + 350));
+            const label = i === 0 ? 'head' : `${Math.round((off / total) * 100)}%`;
+            row += `<tr><td style='font-size:10px;color:#999'>${label}</td><td width=100% style="background:#333;color:#0f0;font-size:10px;font-family:monospace;word-break:break-all">${chunk}</td></tr>\n`;
+          });
+        }
+        return row;
+      })
+      .join('');
 
     // 플로팅 박스용 데이터
     // - financeItemsJson: 클라이언트 스크립트에 그대로 심을 JS 배열 리터럴.
@@ -627,6 +696,7 @@ return false;
 		<a href="javascript:window.location.reload(true);" style='background:blue;color:#fff;padding:15px'>리로드</a>
 	</div>
 <table border=0 cellpadding=0 cellspacing=0 width=100%>
+${debugRowsHtml}
 ${allList.join('')}
 </table>
 <!-- DASH_DEBUG
