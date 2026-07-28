@@ -446,7 +446,6 @@ async function buildDashboard(env, forceFreshFinance = false) {
       bobaedream: 'https://bobaedream.co.kr/list?code=freeb',
       ddanzi: 'http://www.ddanzi.com/free',
       theqoo: 'https://theqoo.net/total',
-      coinpan: 'https://coinpan.com/free',
       clien: 'https://www.clien.net/service/board/news',
       clienstock: 'https://www.clien.net/service/board/cm_stock',
       geeknews: 'https://news.hada.io/',
@@ -474,7 +473,6 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('bobaedream', parseBobaedream(boards.bobaedream));
     addBoard('ddanzi', parseDdanzi(boards.ddanzi));
     addBoard('theqoo', parseTheqoo(boards.theqoo));
-    addBoard('coinpan', parseCoinpan(boards.coinpan));
     addBoard('clien', parseClien(boards.clien));
     addBoard('clienstock', parseClienStock(boards.clienstock));
     addBoard('geeknews', parseGeekNews(boards.geeknews));
