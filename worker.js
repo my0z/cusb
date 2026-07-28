@@ -705,6 +705,12 @@ a, table {font-family: 'Nanum Gothic', sans-serif;}
 #floatdiv, #floatdiv a, #floatdiv font, #floatdiv div {
   text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff;
 }
+/* PC(가로 900px 이상)에서는 회전하며 한 줄만 보여주는 축약형 대신
+   전체 시세 목록을 항상 펼쳐서 보여줌. 모바일은 기존처럼 축약/클릭펼침 유지. */
+@media (min-width: 900px) {
+  #financeCollapsed { display:none !important; }
+  #financeExpanded { display:block !important; }
+}
 </style>
 <div id="floatdiv">
 <a id="clock" style="height:24px;font-weight:normal;color:red;font-weight:bold">00:00</a><BR>
