@@ -489,28 +489,6 @@ async function buildDashboard(env, forceFreshFinance = false) {
       )
       .join('\n');
 
-    // TEMP: 화면에서 바로 진단하기 위해 dbg 행을 목록 상단에 노출.
-    // 확인 끝나면 이 블록 지울 것.
-    const debugRowsHtml = Object.keys(boardUrls)
-      .map((k) => {
-        const d = boardDebug[k] || {};
-        const cnt = parsedCounts[k] != null ? parsedCounts[k] : '-';
-        const status = d.error ? `에러:${d.error}` : `http${d.httpCode} ${d.bytes}bytes`;
-        let row = `<tr><td height=30 style='font-size:12px;color:#666'>dbg</td><td width=100% style="background:#eee;color:#111;font-size:12px;font-family:monospace">[${k}] ${status} → 파싱 ${cnt}건</td></tr>\n`;
-        if (cnt === 0 && boards[k]) {
-          const clean = (s) => s.replace(/[\r\n\t]+/g, ' ').replace(/</g, '&lt;');
-          const total = boards[k].length;
-          const offsets = [0, Math.floor(total * 0.25), Math.floor(total * 0.5)];
-          offsets.forEach((off, i) => {
-            const chunk = clean(boards[k].slice(off, off + 350));
-            const label = i === 0 ? 'head' : `${Math.round((off / total) * 100)}%`;
-            row += `<tr><td style='font-size:10px;color:#999'>${label}</td><td width=100% style="background:#333;color:#0f0;font-size:10px;font-family:monospace;word-break:break-all">${chunk}</td></tr>\n`;
-          });
-        }
-        return row;
-      })
-      .join('');
-
     // 플로팅 박스용 데이터
     // - financeItemsJson: 클라이언트 스크립트에 그대로 심을 JS 배열 리터럴.
     //   "</script>" 로 끊기지 않도록 '<' 를 < 로 이스케이프.
@@ -649,7 +627,6 @@ return false;
 		<a href="javascript:window.location.reload(true);" style='background:blue;color:#fff;padding:15px'>리로드</a>
 	</div>
 <table border=0 cellpadding=0 cellspacing=0 width=100%>
-${debugRowsHtml}
 ${allList.join('')}
 </table>
 <!-- DASH_DEBUG
