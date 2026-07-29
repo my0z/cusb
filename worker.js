@@ -675,11 +675,11 @@ async function renderHotTopicsBox(env) {
   </div>`;
 }
 
-// 같은 제목이 2일 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
+// 같은 제목이 12시간 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
 // (게시판 원문엔 날짜가 없어서 "처음 본 시각" 기준으로 판단하는 방식)
 const SEEN_TITLES_KEY = 'seen_titles_v1';
-const STALE_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000; // 2일
-const SEEN_PRUNE_MS = 4 * 24 * 60 * 60 * 1000; // 4일 이상 안 보이면 기록에서 정리
+const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000; // 12시간
+const SEEN_PRUNE_MS = 2 * 24 * 60 * 60 * 1000; // 2일 이상 안 보이면 기록에서 정리
 
 async function filterStaleRows(env, rows) {
   if (!env.DASH_KV) return rows;
@@ -706,7 +706,7 @@ async function filterStaleRows(env, rows) {
     if (now - seen[title] < STALE_THRESHOLD_MS) {
       filtered.push(rowHtml);
     }
-    // else: 2일 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
+    // else: 12시간 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
   }
 
   // 오래 안 보인 기록은 정리 (KV quota 보호)
