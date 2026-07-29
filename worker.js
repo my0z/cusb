@@ -613,7 +613,7 @@ async function maybeSummarizeHotTopics(env) {
 ${allTitles.slice(0, 400).join('\n')}`;
 
   try {
-    const res = await env.AI.run('@cf/meta/llama-3.3-70b-instruct', {
+    const res = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 900,
     });
