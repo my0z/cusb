@@ -9,6 +9,9 @@ compatibility_date = "2026-07-27"
 binding = "DASH_KV"
 id = "ab10b3b77bb04d2ca81d2b0ee6755d94"
 
+[ai]
+binding = "AI"
+
 # 1분마다 백그라운드에서 buildDashboard 실행 (scheduled 핸들러 트리거)
 [triggers]
 crons = ["* * * * *"]
