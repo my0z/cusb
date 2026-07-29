@@ -568,13 +568,20 @@ async function maybeSaveHotSnapshot(env, allList) {
 // 2시간에 한 번, 누적된 스냅샷 전체를 묶어 AI에게 "핫이슈 Top5 + 관련종목" 요청.
 // env.AI (Workers AI) 바인딩이 없으면 조용히 스킵.
 async function maybeSummarizeHotTopics(env) {
-  if (!env.DASH_KV || !env.AI) return;
+  if (!env.DASH_KV) return;
+  if (!env.AI) {
+    await env.DASH_KV.put('hot_topics_debug', 'AI 바인딩 없음 (env.AI undefined) - 대시보드에서 Workers AI 바인딩을 변수명 AI로 추가해야 함');
+    return;
+  }
   const now = Date.now();
   const lastRunRaw = await env.DASH_KV.get(HOT_SUMMARY_META_KEY);
   if (lastRunRaw && now - Number(lastRunRaw) < HOT_SUMMARY_INTERVAL_MS) return;
 
   const list = await env.DASH_KV.list({ prefix: HOT_SNAP_PREFIX });
-  if (!list.keys.length) return;
+  if (!list.keys.length) {
+    await env.DASH_KV.put('hot_topics_debug', `스냅샷 0개 (아직 30분 주기가 안 돌았거나 저장이 안 되는 중) at ${new Date(now).toISOString()}`);
+    return;
+  }
 
   const allTitles = [];
   for (const key of list.keys) {
@@ -586,7 +593,10 @@ async function maybeSummarizeHotTopics(env) {
       /* 손상된 스냅샷은 무시 */
     }
   }
-  if (allTitles.length < 20) return; // 아직 데이터 부족
+  if (allTitles.length < 20) {
+    await env.DASH_KV.put('hot_topics_debug', `스냅샷 ${list.keys.length}개, 제목 ${allTitles.length}개 - 20개 미만이라 대기 중 at ${new Date(now).toISOString()}`);
+    return;
+  }
 
   const prompt = `다음은 최근 몇 시간 동안 한국 여러 커뮤니티/주식 게시판에 올라온 글 제목 목록이다.
 같은 이슈를 다루는 제목들을 하나로 묶어서, 지금 가장 화제가 되는 주제 상위 5개를 뽑아라.
@@ -612,9 +622,12 @@ ${allTitles.slice(0, 400).join('\n')}`;
     const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed) && parsed.length) {
       await env.DASH_KV.put(HOT_SUMMARY_KEY, JSON.stringify({ items: parsed, generatedAt: now }));
+      await env.DASH_KV.put('hot_topics_debug', `성공: ${parsed.length}개 주제 저장 at ${new Date(now).toISOString()}`);
+    } else {
+      await env.DASH_KV.put('hot_topics_debug', `AI 응답은 받았는데 배열이 비어있거나 형식이 다름. raw: ${raw.slice(0, 500)}`);
     }
   } catch (e) {
-    // AI 응답 파싱 실패 시 기존 캐시된 요약은 그대로 두고 다음 사이클에 재시도
+    await env.DASH_KV.put('hot_topics_debug', `에러: ${e.message || String(e)} at ${new Date(now).toISOString()}`);
   } finally {
     // 실패하더라도 다음 사이클까지 텀은 유지 (같은 실패를 매분 반복 호출하지 않도록)
     await env.DASH_KV.put(HOT_SUMMARY_META_KEY, String(now));
@@ -625,7 +638,14 @@ ${allTitles.slice(0, 400).join('\n')}`;
 async function renderHotTopicsBox(env) {
   if (!env.DASH_KV) return '';
   const raw = await env.DASH_KV.get(HOT_SUMMARY_KEY);
-  if (!raw) return '';
+  if (!raw) {
+    // TEMP: 아직 요약 결과가 없을 때 원인 진단용 표시. 정상화되면 지울 것.
+    const dbg = await env.DASH_KV.get('hot_topics_debug');
+    const aiBound = env.AI ? 'AI바인딩:있음' : 'AI바인딩:없음';
+    return `<div style="margin:8px;padding:8px 12px;background:#333;color:#0f0;font-size:12px;font-family:monospace;border-radius:8px;">
+      🔥핫이슈 dbg — ${aiBound} / ${dbg ? dbg.replace(/</g, '&lt;') : '아직 기록 없음(첫 크론 실행 전)'}
+    </div>`;
+  }
   let data;
   try {
     data = JSON.parse(raw);
