@@ -817,19 +817,24 @@ body { margin:0px; font-weight:normal; font-size:18px; }
 <style type="text/css">
 #floatdiv { position:fixed; height:30px; right:0px; display:inline-block; top:10px; background-color: transparent; margin:0; text-align:right; }
 a, table {font-family: 'Nanum Gothic', sans-serif;}
-#financeCollapsed { min-height:20px; }
 #financeExpanded { background:transparent; padding:4px; }
 #floatdiv, #floatdiv a, #floatdiv font, #floatdiv div {
   text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff;
 }
-/* PC(가로 900px 이상)에서는 회전하며 한 줄만 보여주는 축약형 대신
-   전체 시세 목록을 항상 펼쳐서 보여줌. 모바일은 기존처럼 축약/클릭펼침 유지. */
+/* 줄인(collapsed) 상태 전용 스크롤 티커 */
+#tickerWrap { overflow:hidden; white-space:nowrap; max-width:260px; height:24px; cursor:pointer; margin-left:auto; }
+#tickerInner { display:inline-block; padding-left:100%; animation: ticker-move 22s linear infinite; color:red; font-weight:bold; }
+@keyframes ticker-move { 0% { transform:translateX(0); } 100% { transform:translateX(-100%); } }
+#floatExtras { display:none; }
+/* PC(가로 900px 이상)에서는 줄인 티커 대신 시계/날짜/전체 시세 목록을 항상 다 보여줌 */
 @media (min-width: 900px) {
-  #financeCollapsed { display:none !important; }
+  #tickerWrap { display:none !important; }
   #financeExpanded { display:block !important; }
+  #floatExtras { display:block !important; }
 }
 </style>
 <div id="floatdiv">
+<div id="floatExtras">
 <a id="clock" style="height:24px;font-weight:normal;color:red;font-weight:bold">00:00</a><BR>
 <script>
 var clockTarget = document.getElementById("clock");
@@ -853,41 +858,36 @@ init();
     var currentTime = d.getHours() + ":" +  ("00" + d.getMinutes()).slice(-2)  + ":" + ("00" + d.getSeconds()).slice(-2);
     document.getElementById("time-result").innerHTML = currentDate + "," + currentTime + "&nbsp; &nbsp; ";
 </script>
-<div id="financeCollapsed" onclick="fdExpand(event)" style="cursor:pointer;"></div>
+</div>
+<div id="tickerWrap" onclick="fdExpand(event)"><span id="tickerInner"></span></div>
 <div id="financeExpanded" style="display:none;">
 ${financeExpandedHtml}
 </div>
 <script>
 var financeItems = ${financeItemsJson};
-var fdIndex = 0;
 var fdExpanded = false;
-function fdRender() {
-  var el = document.getElementById('financeCollapsed');
-  if (el && financeItems.length) el.innerHTML = financeItems[fdIndex];
-}
-function fdRotate() {
-  if (fdExpanded || !financeItems.length) return;
-  fdIndex = (fdIndex + 1) % financeItems.length;
-  fdRender();
-}
+(function fdTickerInit() {
+  var el = document.getElementById('tickerInner');
+  if (el && financeItems.length) el.innerHTML = financeItems.join('&nbsp;&nbsp;•&nbsp;&nbsp;');
+})();
 function fdExpand(e) {
   if (e) { e.preventDefault(); e.stopPropagation(); }
   fdExpanded = true;
-  document.getElementById('financeCollapsed').style.display = 'none';
+  document.getElementById('tickerWrap').style.display = 'none';
+  document.getElementById('floatExtras').style.display = 'block';
   document.getElementById('financeExpanded').style.display = 'block';
 }
 function fdCollapse() {
   fdExpanded = false;
   document.getElementById('financeExpanded').style.display = 'none';
-  document.getElementById('financeCollapsed').style.display = 'block';
+  document.getElementById('floatExtras').style.display = 'none';
+  document.getElementById('tickerWrap').style.display = 'block';
 }
 document.addEventListener('click', function(e) {
   if (!fdExpanded) return;
   var box = document.getElementById('floatdiv');
   if (box && !box.contains(e.target)) fdCollapse();
 });
-fdRender();
-setInterval(fdRotate, 3000);
 </script>
 <BR>
 <a href=https://aqicn.org/map/world/kr/ target=_blank>
