@@ -15,3 +15,18 @@ binding = "AI"
 # 1분마다 백그라운드에서 buildDashboard 실행 (scheduled 핸들러 트리거)
 [triggers]
 crons = ["* * * * *"]
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
