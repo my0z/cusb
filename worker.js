@@ -617,7 +617,12 @@ ${allTitles.slice(0, 400).join('\n')}`;
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 900,
     });
-    const raw = (res.response || '').trim();
+    let raw = '';
+    if (typeof res === 'string') raw = res;
+    else if (typeof res?.response === 'string') raw = res.response;
+    else if (res?.response != null) raw = JSON.stringify(res.response);
+    else raw = JSON.stringify(res ?? '');
+    raw = raw.trim();
     const jsonStr = raw.replace(/^```json\s*|```\s*$/g, '').trim();
     const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed) && parsed.length) {
