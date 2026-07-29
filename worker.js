@@ -675,6 +675,49 @@ async function renderHotTopicsBox(env) {
   </div>`;
 }
 
+// 같은 제목이 2일 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
+// (게시판 원문엔 날짜가 없어서 "처음 본 시각" 기준으로 판단하는 방식)
+const SEEN_TITLES_KEY = 'seen_titles_v1';
+const STALE_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000; // 2일
+const SEEN_PRUNE_MS = 4 * 24 * 60 * 60 * 1000; // 4일 이상 안 보이면 기록에서 정리
+
+async function filterStaleRows(env, rows) {
+  if (!env.DASH_KV) return rows;
+  const now = Date.now();
+  let seen = {};
+  try {
+    const raw = await env.DASH_KV.get(SEEN_TITLES_KEY);
+    if (raw) seen = JSON.parse(raw);
+  } catch (e) {
+    seen = {};
+  }
+
+  const currentTitles = new Set();
+  const filtered = [];
+  for (const rowHtml of rows) {
+    const m = rowHtml.match(/<a[^>]*target=_blank[^>]*>([\s\S]*?)<\/a>/);
+    const title = m ? m[1].replace(/<[^>]+>/g, '').trim() : null;
+    if (!title) {
+      filtered.push(rowHtml);
+      continue;
+    }
+    currentTitles.add(title);
+    if (!seen[title]) seen[title] = now;
+    if (now - seen[title] < STALE_THRESHOLD_MS) {
+      filtered.push(rowHtml);
+    }
+    // else: 2일 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
+  }
+
+  // 오래 안 보인 기록은 정리 (KV quota 보호)
+  for (const t of Object.keys(seen)) {
+    if (!currentTitles.has(t) && now - seen[t] > SEEN_PRUNE_MS) delete seen[t];
+  }
+  await env.DASH_KV.put(SEEN_TITLES_KEY, JSON.stringify(seen));
+
+  return filtered;
+}
+
 async function buildDashboard(env, forceFreshFinance = false) {
     const boardUrls = {
       slrclub: 'http://www.slrclub.com/bbs/zboard.php?id=free',
@@ -722,6 +765,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('jungletalk', parseJungleTalk(boards.jungletalk));
     addBoard('dcdesign', parseDcDesign(boards.dcdesign));
     addBoard('dcprogramming', parseDcProgramming(boards.dcprogramming));
+    allList = await filterStaleRows(env, allList);
     shuffle(allList);
     await maybeSaveHotSnapshot(env, allList);
     const hotTopicsHtml = await renderHotTopicsBox(env);
