@@ -525,14 +525,15 @@ const HOT_SUMMARY_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간마다 AI 요약
 
 function extractTitlesFromList(allList) {
   const joined = allList.join('');
-  const matches = [...joined.matchAll(/<a[^>]*target=_blank[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/g)];
+  const matches = [...joined.matchAll(/<a[^>]*target=_blank[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)];
   const seen = new Set();
   const out = [];
   for (const m of matches) {
-    const t = m[1].replace(/<[^>]+>/g, '').trim();
+    const href = m[1];
+    const t = m[2].replace(/<[^>]+>/g, '').trim();
     if (t && !seen.has(t)) {
       seen.add(t);
-      out.push(t);
+      out.push({ title: t, href });
     }
   }
   return out;
@@ -583,39 +584,48 @@ async function maybeSummarizeHotTopics(env) {
     return;
   }
 
-  const allTitles = [];
+  // {title, href} 배열을 제목 기준으로 중복 제거하며 모음 (최신 href로 덮어씀)
+  const byTitle = new Map();
   for (const key of list.keys) {
     const raw = await env.DASH_KV.get(key.name);
     if (!raw) continue;
     try {
-      allTitles.push(...JSON.parse(raw));
+      const arr = JSON.parse(raw);
+      for (const it of arr) {
+        if (it && it.title) byTitle.set(it.title, it.href || '');
+      }
     } catch (e) {
       /* 손상된 스냅샷은 무시 */
     }
   }
+  const allTitles = [...byTitle.entries()].map(([title, href]) => ({ title, href }));
   if (allTitles.length < 20) {
     await env.DASH_KV.put('hot_topics_debug', `스냅샷 ${list.keys.length}개, 제목 ${allTitles.length}개 - 20개 미만이라 대기 중 at ${new Date(now).toISOString()}`);
     return;
   }
 
-  const prompt = `다음은 최근 몇 시간 동안 한국 여러 커뮤니티/주식 게시판에 올라온 글 제목 목록이다.
+  const capped = allTitles.slice(0, 400);
+  const indexedList = capped.map((it, i) => `${i}: ${it.title}`).join('\n');
+
+  const prompt = `다음은 최근 몇 시간 동안 한국 여러 커뮤니티/주식 게시판에 올라온 글 제목 목록이다. 각 줄 앞의 숫자는 인덱스다.
 같은 이슈를 다루는 제목들을 하나로 묶어서, 지금 가장 화제가 되는 주제 상위 5개를 뽑아라.
 
 각 주제마다:
 - topic: 주제를 한 줄로 (10~20자)
 - reason: 왜 화제인지 한 줄 요약
 - stocks: 이 주제와 직접 관련된 국내/미국 상장 종목명이 있으면 배열로 (억지로 끼워맞추지 말고, 없으면 빈 배열)
+- sources: 이 주제 판단의 근거가 된 제목들의 인덱스 번호 배열 (최대 5개, 정확히 관련된 것만)
 
 아래 JSON 배열 형식으로만 답하라. 다른 설명은 절대 넣지 마라.
-[{"topic":"...","reason":"...","stocks":["...","..."]}]
+[{"topic":"...","reason":"...","stocks":["..."],"sources":[3,17,42]}]
 
 제목 목록:
-${allTitles.slice(0, 400).join('\n')}`;
+${indexedList}`;
 
   try {
     const res = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 900,
+      max_tokens: 1000,
     });
     let raw = '';
     if (typeof res === 'string') raw = res;
@@ -626,8 +636,22 @@ ${allTitles.slice(0, 400).join('\n')}`;
     const jsonStr = raw.replace(/^```json\s*|```\s*$/g, '').trim();
     const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed) && parsed.length) {
-      await env.DASH_KV.put(HOT_SUMMARY_KEY, JSON.stringify({ items: parsed, generatedAt: now }));
-      await env.DASH_KV.put('hot_topics_debug', `성공: ${parsed.length}개 주제 저장 at ${new Date(now).toISOString()}`);
+      // 인덱스를 실제 {title, href}로 치환해서 저장 (렌더링 시 다시 매칭할 필요 없게)
+      const items = parsed.map((it) => {
+        const sourceIdx = Array.isArray(it.sources) ? it.sources : [];
+        const sources = sourceIdx
+          .map((i) => capped[i])
+          .filter(Boolean)
+          .slice(0, 5);
+        return {
+          topic: it.topic || '',
+          reason: it.reason || '',
+          stocks: Array.isArray(it.stocks) ? it.stocks : [],
+          sources,
+        };
+      });
+      await env.DASH_KV.put(HOT_SUMMARY_KEY, JSON.stringify({ items, generatedAt: now }));
+      await env.DASH_KV.put('hot_topics_debug', `성공: ${items.length}개 주제 저장 at ${new Date(now).toISOString()}`);
     } else {
       await env.DASH_KV.put('hot_topics_debug', `AI 응답은 받았는데 배열이 비어있거나 형식이 다름. raw: ${raw.slice(0, 500)}`);
     }
@@ -666,10 +690,20 @@ async function renderHotTopicsBox(env) {
         it.stocks && it.stocks.length
           ? `<div style="margin-top:4px;font-size:13px;color:#0a7a3d;">📈 관련종목: ${it.stocks.join(', ')}</div>`
           : '';
+      const sourcesHtml =
+        it.sources && it.sources.length
+          ? `<div style="margin-top:6px;">${it.sources
+              .map(
+                (s) =>
+                  `<a href="${s.href}" target="_blank" style="display:block;font-size:12px;color:#888;margin-top:2px;">↳ ${s.title}</a>`
+              )
+              .join('')}</div>`
+          : '';
       return `<div style="padding:10px 14px;border-bottom:1px solid rgba(0,0,0,0.08);">
         <div style="font-weight:bold;font-size:16px;color:#111;">${i + 1}. ${it.topic}</div>
         <div style="font-size:13px;color:#555;margin-top:2px;">${it.reason}</div>
         ${stocksHtml}
+        ${sourcesHtml}
       </div>`;
     })
     .join('');
@@ -723,6 +757,56 @@ async function filterStaleRows(env, rows) {
   return filtered;
 }
 
+// 티커 밑에 고정으로 보여줄 오늘 날씨 (서울 기준, Open-Meteo - 무료/키 불필요)
+const WEATHER_KV_KEY = 'weather_cache_v1';
+const WEATHER_TTL_MS = 60 * 60 * 1000; // 1시간
+
+function weatherCodeToText(code) {
+  const map = {
+    0: '☀️ 맑음', 1: '🌤️ 대체로 맑음', 2: '⛅ 구름조금', 3: '☁️ 흐림',
+    45: '🌫️ 안개', 48: '🌫️ 짙은안개',
+    51: '🌦️ 이슬비', 53: '🌦️ 이슬비', 55: '🌦️ 이슬비',
+    61: '🌧️ 비', 63: '🌧️ 비', 65: '🌧️ 강한비',
+    71: '🌨️ 눈', 73: '🌨️ 눈', 75: '🌨️ 강한눈',
+    80: '🌧️ 소나기', 81: '🌧️ 소나기', 82: '🌧️ 강한소나기',
+    95: '⛈️ 뇌우', 96: '⛈️ 뇌우', 99: '⛈️ 뇌우',
+  };
+  return map[code] || '🌡️ 날씨';
+}
+
+async function getWeatherText(env) {
+  if (env.DASH_KV) {
+    const cachedRaw = await env.DASH_KV.get(WEATHER_KV_KEY);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw);
+        if (cached.text && Date.now() - cached.generatedAt < WEATHER_TTL_MS) {
+          return cached.text;
+        }
+      } catch (e) {
+        /* 캐시 손상 시 새로 받아옴 */
+      }
+    }
+  }
+  try {
+    const res = await fetch(
+      'https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FSeoul'
+    );
+    const data = await res.json();
+    const temp = Math.round(data.current.temperature_2m);
+    const desc = weatherCodeToText(data.current.weather_code);
+    const hi = Math.round(data.daily.temperature_2m_max[0]);
+    const lo = Math.round(data.daily.temperature_2m_min[0]);
+    const text = `${desc} 서울 ${temp}°C (최저${lo}° 최고${hi}°)`;
+    if (env.DASH_KV) {
+      await env.DASH_KV.put(WEATHER_KV_KEY, JSON.stringify({ text, generatedAt: Date.now() }));
+    }
+    return text;
+  } catch (e) {
+    return '';
+  }
+}
+
 async function buildDashboard(env, forceFreshFinance = false) {
     const boardUrls = {
       slrclub: 'http://www.slrclub.com/bbs/zboard.php?id=free',
@@ -747,6 +831,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
     // 3시간 캐시 여부를 알아서 판단.
     const { results: boards, debug: boardDebug } = await fetchAllParallel(boardUrls, { ppomppu: 'euc-kr' });
     const { items: financeItems, debug: financeDebug } = await getFinanceData(env, forceFreshFinance);
+    const weatherText = await getWeatherText(env);
 
     // 게시판 통합
     let allList = [];
@@ -822,7 +907,7 @@ a, table {font-family: 'Nanum Gothic', sans-serif;}
   text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff;
 }
 /* 줄인(collapsed) 상태 전용 스크롤 티커 */
-#tickerWrap { overflow:hidden; white-space:nowrap; max-width:260px; height:24px; cursor:pointer; margin-left:auto; }
+#tickerWrap { overflow:hidden; white-space:nowrap; width:90vw; height:24px; cursor:pointer; margin-left:auto; }
 #tickerInner { display:inline-block; padding-left:100%; animation: ticker-move 22s linear infinite; color:red; font-weight:bold; }
 @keyframes ticker-move { 0% { transform:translateX(0); } 100% { transform:translateX(-100%); } }
 #floatExtras { display:none; }
@@ -860,6 +945,7 @@ init();
 </script>
 </div>
 <div id="tickerWrap" onclick="fdExpand(event)"><span id="tickerInner"></span></div>
+<div id="weatherFixed" style="font-size:14px;color:red;font-weight:bold;text-align:right;">${weatherText}</div>
 <div id="financeExpanded" style="display:none;">
 ${financeExpandedHtml}
 </div>
@@ -889,21 +975,8 @@ document.addEventListener('click', function(e) {
   if (box && !box.contains(e.target)) fdCollapse();
 });
 </script>
-<BR>
-<a href=https://aqicn.org/map/world/kr/ target=_blank>
-  <img src="http://www.kweather.co.kr/icon/air/iconFore_01.png" width="20px">
-  <img src="http://www.kweather.co.kr/icon/air/iconFore_02.png" width="20px">
-</a>
-<a href=https://earth.nullschool.net/#current/wind/surface/level/orthographic=-236.80,36.12,1191 target=_blank>
-  <img src="http://www.kweather.co.kr/icon/air/iconFore_03.png" width="20px">
-  <img src="http://www.kweather.co.kr/icon/air/iconFore_04.png" width="20px">
-</a>
-<a href=https://www.windy.com/ko/-PM2-5-pm2p5?cams,pm2p5,33.578,132.363,5 target=_blank>
-  <img src="http://www.kweather.co.kr/icon/air/iconFore_05.png" width="20px">
-</a><BR>
-<a href=https://analytics.google.com/analytics/web/#/report-home/a45732830w91645608p95389702 target=_blank>U</a><BR>
-<a href=https://analytics.google.com/analytics/web/#/p264059873/reports/defaulthome?params=_u..nav%3Ddefault target=_blank>s</a>
 </div>
+
 <title>영지가 만들어 보는거래요..</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 <script>
