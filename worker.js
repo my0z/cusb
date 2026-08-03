@@ -517,7 +517,7 @@ async function getFinanceData(env, forceFresh) {
 // 뽑아서 요약(+ 관련 종목 추정)해 KV에 저장. 화면 상단엔 그 결과만 표시.
 // (완전 속보/단발성 글은 어차피 아래 실시간 리스트에서 보이므로 여기선 안 다룸)
 const HOT_SNAP_PREFIX = 'hotsnap:';
-const HOT_SNAP_RETAIN_MS = 6 * 60 * 60 * 1000; // 스냅샷 보관 6시간
+const HOT_SNAP_RETAIN_MS = 3 * 60 * 60 * 1000; // 스냅샷 보관 3시간
 const HOT_SNAP_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 스냅샷
 const HOT_SUMMARY_KEY = 'hot_topics_v1';
 const HOT_SUMMARY_META_KEY = 'hot_topics_last_run';
@@ -714,10 +714,10 @@ async function renderHotTopicsBox(env) {
   </div>`;
 }
 
-// 같은 제목이 12시간 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
+// 같은 제목이 5시간 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
 // (게시판 원문엔 날짜가 없어서 "처음 본 시각" 기준으로 판단하는 방식)
 const SEEN_TITLES_KEY = 'seen_titles_v1';
-const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000; // 12시간
+const STALE_THRESHOLD_MS = 5 * 60 * 60 * 1000; // 5시간
 const SEEN_PRUNE_MS = 2 * 24 * 60 * 60 * 1000; // 2일 이상 안 보이면 기록에서 정리
 
 async function filterStaleRows(env, rows) {
@@ -745,7 +745,7 @@ async function filterStaleRows(env, rows) {
     if (now - seen[title] < STALE_THRESHOLD_MS) {
       filtered.push(rowHtml);
     }
-    // else: 12시간 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
+    // else: 5시간 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
   }
 
   // 오래 안 보인 기록은 정리 (KV quota 보호)
