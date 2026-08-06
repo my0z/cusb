@@ -65,13 +65,9 @@ function m(match, idx = 1) {
   return match && match[idx] != null ? match[idx] : '';
 }
 
-function parseInvestingQuote(html, debug) {
+function parseInvestingQuote(html) {
   const price = html.match(/data-test="instrument-price-last"[^>]*>([\s\S]*?)<\/div>/);
   const chg = html.match(/data-test="instrument-price-change-percent"[^>]*>([\s\S]*?)<\/span>/);
-  if (debug) {
-    const allPrices = [...html.matchAll(/data-test="instrument-price-last"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[1]);
-    debug.candidates = allPrices.slice(0, 5);
-  }
   return [m(price), m(chg)];
 }
 
@@ -411,7 +407,7 @@ function parseGeekNews(html) {
 // 우측 상단 박스(코스피~미세먼지, investing.com + 휘발유 + 미세먼지)는 전부 묶어서
 // 하루 8번 정도(=3시간에 한 번)만 새로 받아오도록 캐시. 게시판만 지금처럼
 // Cron 주기(10분)마다 그대로 갱신.
-const FINANCE_TTL_MS = 3 * 60 * 60 * 1000; // 3시간 = 하루 8회
+const FINANCE_TTL_MS = 60 * 1000; // 1분 (더 짧으면 investing.com 차단 위험)
 // v2: 캐시에 저장하는 형태를 문자열(html) -> 개별 항목 배열(items)로 변경
 // (플로팅 박스에서 항목별로 순환/펼치기를 하려면 항목 단위 데이터가 필요해서)
 const FINANCE_KV_KEY = 'finance_cache_v2';
@@ -453,9 +449,7 @@ async function getFinanceData(env, forceFresh) {
   const { results: fin, debug: finDebug } = await fetchAllParallel(financeUrls);
   const items = [];
   const addQuote = (key, label, link) => {
-    const dbg = {};
-    const [price, chg] = parseInvestingQuote(fin[key], dbg);
-    if (finDebug[key]) finDebug[key].candidates = dbg.candidates;
+    const [price, chg] = parseInvestingQuote(fin[key]);
     items.push(
       `<a target=_blank href=${link || financeUrls[key]}>${label} <font style=color:red;font-weight:bold>${price}</font> ${chg}</a>`
     );
@@ -874,13 +868,6 @@ async function buildDashboard(env, forceFreshFinance = false) {
       )
       .join('\n');
 
-    // TEMP: 시세 값이 안 맞는다는 신고가 있어서, kospi/usdkrw 페이지 안에
-    // 같은 속성을 가진 후보값이 몇 개나 있는지/뭐가 있는지 잠깐 노출. 원인 확인되면 지울 것.
-    const financeDebugHtml = ['kospi', 'usdkrw'].map((k) => {
-      const cands = (financeDebug[k] && financeDebug[k].candidates) || [];
-      return `<div style="background:#333;color:#0f0;font-size:11px;font-family:monospace;padding:4px 8px;word-break:break-all;">[${k}] 후보(${cands.length}개): ${cands.join(' | ')}</div>`;
-    }).join('');
-
     // 플로팅 박스용 데이터
     // - financeItemsJson: 클라이언트 스크립트에 그대로 심을 JS 배열 리터럴.
     //   "</script>" 로 끊기지 않도록 '<' 를 < 로 이스케이프.
@@ -1012,7 +999,6 @@ return false;
 		<a href="?live=1" style='background:#e63946;color:#fff;padding:15px' target=_blank>실시간</a>
 		<a href="javascript:window.location.reload(true);" style='background:blue;color:#fff;padding:15px'>리로드</a>
 	</div>
-${financeDebugHtml}
 ${hotTopicsHtml}
 <table border=0 cellpadding=0 cellspacing=0 width=100%>
 ${allList.join('')}
