@@ -1,5 +1,6 @@
 /**
  * 영지의 개인 대시보드 - Cloudflare Workers 버전
+ * 마지막 수정: 2026-08-09 05:50 (KST)
  *
  * PHP curl_multi + 파일캐시 -> Workers Promise.allSettled + fetch(cf.cacheTtl) 로 포팅.
  * - 모든 외부 요청은 Promise.allSettled로 완전 병렬 실행 (한 사이트 지연이 전체를 막지 않음)
@@ -360,6 +361,48 @@ function parseKrStock(html) {
   return out;
 }
 
+// 네이트판 톡커들의 선택 (m.pann.nate.com/talk/talker) - 실시간 인기글
+function parseNatePann(html) {
+  const out = [];
+  const re = /href=["'](?:https?:\/\/m\.pann\.nate\.com)?(\/talk\/\d+\?[^"']*)["'][^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count5 = 0;
+  const seen5 = new Set();
+  while ((mm = re.exec(html)) !== null && count5 < 30) {
+    const path = mm[1];
+    if (seen5.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (!title) continue;
+    seen5.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#F6C6C6;color:#1a1a1a'>np. <a style=color:#1a1a1a target=_blank href="https://m.pann.nate.com${path}">${title}</a></td></tr>\n`
+    );
+    count5++;
+  }
+  return out;
+}
+
+// 루리웹 유머 게시판 (bbs.ruliweb.com/community/board/300143) - 국내 최대 게임/커뮤니티 사이트 중 하나
+function parseRuliweb(html) {
+  const out = [];
+  const re = /href=["'](?:https?:\/\/bbs\.ruliweb\.com)?(\/community\/board\/300143\/read\/\d+)["'][^>]*>([\s\S]*?)<\/a>/g;
+  let mm;
+  let count6 = 0;
+  const seen6 = new Set();
+  while ((mm = re.exec(html)) !== null && count6 < 30) {
+    const path = mm[1];
+    if (seen6.has(path)) continue;
+    const title = mm[2].replace(/<[^>]+>/g, '').trim();
+    if (!title) continue;
+    seen6.add(path);
+    out.push(
+      `<tr><td height=35><div style=width:0px;overflow:hidden></div></td><td width=100% style='background:#D0E8C5;color:#1a1a1a'>rw. <a style=color:#1a1a1a target=_blank href="https://bbs.ruliweb.com${path}">${title}</a></td></tr>\n`
+    );
+    count6++;
+  }
+  return out;
+}
+
 // OKKY 커뮤니티 (okky.kr/community) - 국내 최대 개발자 커뮤니티
 // 서버렌더링 확인됨. 글 링크는 /articles/숫자?topic=community 또는
 // /spaces/스페이스명/숫자?topic=community 형태.
@@ -407,7 +450,7 @@ function parseGeekNews(html) {
 // 우측 상단 박스(코스피~미세먼지, investing.com + 휘발유 + 미세먼지)는 전부 묶어서
 // 하루 8번 정도(=3시간에 한 번)만 새로 받아오도록 캐시. 게시판만 지금처럼
 // Cron 주기(10분)마다 그대로 갱신.
-const FINANCE_TTL_MS = 60 * 1000; // 1분 (더 짧으면 investing.com 차단 위험)
+const FINANCE_TTL_MS = 5 * 60 * 1000; // 5분 (1분은 investing.com 쪽 차단으로 빈 값 나오는 문제 있었음)
 // v2: 캐시에 저장하는 형태를 문자열(html) -> 개별 항목 배열(items)로 변경
 // (플로팅 박스에서 항목별로 순환/펼치기를 하려면 항목 단위 데이터가 필요해서)
 const FINANCE_KV_KEY = 'finance_cache_v2';
@@ -505,8 +548,24 @@ async function getFinanceData(env, forceFresh) {
     }
   }
 
+  // investing.com 등이 요청을 막아서 대부분 빈 값으로 파싱되는 경우,
+  // 그 빈 값으로 캐시를 덮어쓰면 화면에 계속 빈 값이 나오게 됨.
+  // 이런 경우엔 캐시를 갱신하지 않고 이전에 저장된 정상 값을 그대로 반환.
+  const emptyCount = items.filter((it) => />\s*<\/font>/.test(it)).length;
   if (env.DASH_KV) {
-    await env.DASH_KV.put(FINANCE_KV_KEY, JSON.stringify({ items, debug: finDebug, generatedAt: Date.now() }));
+    if (items.length && emptyCount > items.length / 2) {
+      const prevRaw = await env.DASH_KV.get(FINANCE_KV_KEY);
+      if (prevRaw) {
+        try {
+          const prev = JSON.parse(prevRaw);
+          if (prev.items) return { items: prev.items, debug: finDebug };
+        } catch (e) {
+          /* 이전 캐시도 손상됐으면 그냥 아래로 진행 */
+        }
+      }
+    } else {
+      await env.DASH_KV.put(FINANCE_KV_KEY, JSON.stringify({ items, debug: finDebug, generatedAt: Date.now() }));
+    }
   }
   return { items, debug: finDebug };
 }
@@ -714,10 +773,10 @@ async function renderHotTopicsBox(env) {
   </div>`;
 }
 
-// 같은 제목이 5시간 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
+// 같은 제목이 10분 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
 // (게시판 원문엔 날짜가 없어서 "처음 본 시각" 기준으로 판단하는 방식)
 const SEEN_TITLES_KEY = 'seen_titles_v1';
-const STALE_THRESHOLD_MS = 5 * 60 * 60 * 1000; // 5시간
+const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10분
 const SEEN_PRUNE_MS = 2 * 24 * 60 * 60 * 1000; // 2일 이상 안 보이면 기록에서 정리
 
 async function filterStaleRows(env, rows) {
@@ -745,7 +804,7 @@ async function filterStaleRows(env, rows) {
     if (now - seen[title] < STALE_THRESHOLD_MS) {
       filtered.push(rowHtml);
     }
-    // else: 5시간 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
+    // else: 10분 넘게 계속 나오는 제목 - 고정글/광고로 판단하고 목록에서 제외
   }
 
   // 오래 안 보인 기록은 정리 (KV quota 보호)
@@ -818,6 +877,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
       clienstock: 'https://www.clien.net/service/board/cm_stock',
       geeknews: 'https://news.hada.io/',
       okky: 'https://okky.kr/community',
+      natepann: 'https://m.pann.nate.com/talk/talker?order=REC',
+      ruliweb: 'https://bbs.ruliweb.com/community/board/300143',
       krstock: 'https://m.dcinside.com/board/krstock',
       paxnet: 'http://www.paxnet.co.kr/tbbs/list?tbbsType=L&id=N00801',
       neostock: 'https://m.dcinside.com/board/neostock',
@@ -849,6 +910,8 @@ async function buildDashboard(env, forceFreshFinance = false) {
     addBoard('clienstock', parseClienStock(boards.clienstock));
     addBoard('geeknews', parseGeekNews(boards.geeknews));
     addBoard('okky', parseOkky(boards.okky));
+    addBoard('natepann', parseNatePann(boards.natepann));
+    addBoard('ruliweb', parseRuliweb(boards.ruliweb));
     addBoard('krstock', parseKrStock(boards.krstock));
     addBoard('paxnet', parsePaxnet(boards.paxnet));
     addBoard('neostock', parseDcNeostock(boards.neostock));
@@ -1033,7 +1096,7 @@ ${debugHtml}
 // 2) 이 Worker의 "트리거" 탭에서 Cron Trigger 추가: 매 1분(* * * * *)
 //    (Cron Trigger 최소 주기가 1분이라 이보다 더 자주는 불가능)
 const KV_KEY = 'dashboard_html_v1';
-const KV_TTL_SECONDS = 600; // KV 자체 만료(안전장치). Cron이 1분마다 갱신하므로 사실상 항상 새 값으로 덮어써짐.
+const KV_TTL_SECONDS = 90; // KV 자체 만료(안전장치). wrangler.toml 크론을 1분(Cloudflare 최소단위)로 맞춰두면 사실상 항상 새 값으로 덮어써짐. 90초는 그보다 살짝 여유만 준 것.
 
 async function getFromKvOrGenerate(env, ctx) {
   if (env.DASH_KV) {
