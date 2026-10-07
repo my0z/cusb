@@ -1,6 +1,6 @@
 /**
  * 영지의 개인 대시보드 - Cloudflare Workers 버전
- * 마지막 수정: 2026-08-09 05:50 (KST)
+ * 마지막 수정: 2026-10-07 22:21 (KST)
  *
  * PHP curl_multi + 파일캐시 -> Workers Promise.allSettled + fetch(cf.cacheTtl) 로 포팅.
  * - 모든 외부 요청은 Promise.allSettled로 완전 병렬 실행 (한 사이트 지연이 전체를 막지 않음)
@@ -571,7 +571,7 @@ async function getFinanceData(env, forceFresh) {
 }
 
 // ===================== 핫이슈 누적 + AI 요약 =====================
-// 동작: 30분마다 그 시점 제목 목록을 KV에 스냅샷 저장 → 6시간치가 쌓이면
+// 동작: 30분마다 그 시점 제목 목록을 KV에 스냅샷 저장 → 3시간치가 쌓이면
 // 2시간에 한 번 AI가 "지금 여러 게시판에 걸쳐 반복 등장하는 진짜 핫이슈"를
 // 뽑아서 요약(+ 관련 종목 추정)해 KV에 저장. 화면 상단엔 그 결과만 표시.
 // (완전 속보/단발성 글은 어차피 아래 실시간 리스트에서 보이므로 여기선 안 다룸)
@@ -773,6 +773,138 @@ async function renderHotTopicsBox(env) {
   </div>`;
 }
 
+// ===================== 돈 되는 키워드 20개 (하루 1회) — 작업: 2026-10-07 22:21 =====================
+// 작성 일시: 2026-10-07 22:21 (KST)
+// 동작: 하루에 한 번(KST 07시 이후 첫 크론) 누적 스냅샷 제목에서 AI가 "요즘 많이 언급되는 단어"를 뽑되
+// 쿠팡파트너스 상품화 / 관련 종목 / 검색 유입 가능성이 있는 것만 20개로 추려 KV에 저장.
+// 정치 사건사고 연예 가십은 제외하도록 프롬프트에 명시. 화면에선 핫이슈 박스 바로 위에 표시.
+const MONEY_KW_KEY = 'money_keywords_v1';
+const MONEY_KW_COUNT = 20;
+const MONEY_KW_START_HOUR_KST = 7; // KST 07시 이후 첫 크론에서 오늘치 생성
+
+// KST 기준 날짜 문자열 (YYYY-MM-DD)
+function kstDateStr(ms) {
+  return new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function kstHour(ms) {
+  return new Date(ms + 9 * 60 * 60 * 1000).getUTCHours();
+}
+
+async function maybeGenerateMoneyKeywords(env) {
+  if (!env.DASH_KV || !env.AI) return;
+  const now = Date.now();
+  if (kstHour(now) < MONEY_KW_START_HOUR_KST) return;
+  const today = kstDateStr(now);
+
+  // 오늘치가 이미 있으면 스킵
+  try {
+    const prevRaw = await env.DASH_KV.get(MONEY_KW_KEY);
+    if (prevRaw) {
+      const prev = JSON.parse(prevRaw);
+      if (prev && prev.date === today) return;
+    }
+  } catch (e) {
+    /* 손상되면 새로 생성 */
+  }
+  // 실패 시 매분 재시도 방지: 오늘 시도 기록을 별도 키로 남김 (시도 후 30분 쉬었다가 재시도)
+  const triedRaw = await env.DASH_KV.get('money_keywords_last_try');
+  if (triedRaw && now - Number(triedRaw) < 30 * 60 * 1000) return;
+  await env.DASH_KV.put('money_keywords_last_try', String(now));
+
+  const list = await env.DASH_KV.list({ prefix: HOT_SNAP_PREFIX });
+  const titleSet = new Set();
+  for (const key of list.keys) {
+    const raw = await env.DASH_KV.get(key.name);
+    if (!raw) continue;
+    try {
+      for (const it of JSON.parse(raw)) {
+        if (it && it.title) titleSet.add(it.title);
+      }
+    } catch (e) {
+      /* 손상된 스냅샷은 무시 */
+    }
+  }
+  const titles = [...titleSet].slice(0, 400);
+  if (titles.length < 20) return;
+
+  const prompt = `다음은 최근 한국 커뮤니티 게시판에 올라온 글 제목 목록이다.
+여기서 요즘 인기 있거나 유행하거나 관심이 큰 단어(제품명 브랜드명 종목명 서비스명 트렌드 키워드)를 뽑아라.
+그중 돈이 될 만한 것만 정확히 ${MONEY_KW_COUNT}개로 추려라.
+
+돈이 되는 기준:
+- 쿠팡 등에서 실제로 팔리는 상품이나 카테고리로 연결 가능
+- 관련 국내 또는 미국 상장 종목이 있음
+- 검색 유입이 클 것으로 보이는 구매 의도나 정보 의도 키워드
+
+제외: 정치 사건사고 연예 가십 특정 개인 비방 성인 도박
+
+각 항목 형식:
+- keyword: 단어 (2~12자)
+- type: "상품" 또는 "종목" 또는 "트렌드" 중 하나
+- note: 왜 돈이 되는지 10자 안팎 한 줄
+
+아래 JSON 배열로만 답하라. 다른 설명 금지.
+[{"keyword":"...","type":"상품","note":"..."}]
+
+제목 목록:
+${titles.join('\n')}`;
+
+  try {
+    const res = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1500,
+    });
+    let raw = '';
+    if (typeof res === 'string') raw = res;
+    else if (typeof res?.response === 'string') raw = res.response;
+    else if (res?.response != null) raw = JSON.stringify(res.response);
+    else raw = JSON.stringify(res ?? '');
+    const jsonStr = raw.trim().replace(/^```json\s*|```\s*$/g, '').trim();
+    const parsed = JSON.parse(jsonStr);
+    if (!Array.isArray(parsed) || !parsed.length) return;
+    const seen = new Set();
+    const items = [];
+    for (const it of parsed) {
+      const kw = String(it?.keyword || '').trim();
+      if (!kw || seen.has(kw)) continue;
+      seen.add(kw);
+      const type = ['상품', '종목', '트렌드'].includes(it.type) ? it.type : '트렌드';
+      items.push({ keyword: kw, type, note: String(it?.note || '').trim() });
+      if (items.length >= MONEY_KW_COUNT) break;
+    }
+    if (!items.length) return;
+    await env.DASH_KV.put(MONEY_KW_KEY, JSON.stringify({ date: today, items, generatedAt: now }));
+  } catch (e) {
+    /* 실패하면 30분 뒤 재시도 (money_keywords_last_try 기준) */
+  }
+}
+
+// 화면 최상단 키워드 박스 HTML (핫이슈 박스 위)
+async function renderMoneyKeywordsBox(env) {
+  if (!env.DASH_KV) return '';
+  const raw = await env.DASH_KV.get(MONEY_KW_KEY);
+  if (!raw) return '';
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    return '';
+  }
+  if (!data || !Array.isArray(data.items) || !data.items.length) return '';
+  const color = { 상품: '#d9480f', 종목: '#0a7a3d', 트렌드: '#1c5fd4' };
+  const chips = data.items
+    .map((it) => {
+      const kw = String(it.keyword).replace(/</g, '&lt;');
+      const note = String(it.note || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      return `<span title="${note}" style="display:inline-block;margin:3px;padding:5px 10px;border-radius:14px;background:#f4f4f4;font-size:14px;color:#111;"><b style="color:${color[it.type] || '#555'};font-size:11px;">${it.type}</b> ${kw}</span>`;
+    })
+    .join('');
+  return `<div style="margin:8px;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+    <div style="background:#b45309;color:#fff;padding:8px 14px;font-weight:bold;font-size:14px;">💰 오늘의 돈 되는 키워드 ${data.items.length}개 (${data.date})</div>
+    <div style="padding:8px 10px;">${chips}</div>
+  </div>`;
+}
+
 // 같은 제목이 10분 넘게 계속 리스트에 나오면 고정글/광고글로 보고 제외.
 // (게시판 원문엔 날짜가 없어서 "처음 본 시각" 기준으로 판단하는 방식)
 const SEEN_TITLES_KEY = 'seen_titles_v1';
@@ -921,7 +1053,7 @@ async function buildDashboard(env, forceFreshFinance = false) {
     allList = await filterStaleRows(env, allList);
     shuffle(allList);
     await maybeSaveHotSnapshot(env, allList);
-    const hotTopicsHtml = await renderHotTopicsBox(env);
+    const hotTopicsHtml = (await renderMoneyKeywordsBox(env)) + (await renderHotTopicsBox(env));
 
     const debugAll = { ...financeDebug, ...boardDebug };
     const debugHtml = Object.entries(debugAll)
@@ -1146,6 +1278,8 @@ export default {
         }
         // AI 요약은 사용자 요청 경로에 안 넣고 여기(크론)에서만 시도 - 지연 방지
         await maybeSummarizeHotTopics(env);
+        // 돈 되는 키워드 20개는 하루 1회만 생성 (KST 07시 이후 첫 크론)
+        await maybeGenerateMoneyKeywords(env);
       })()
     );
   },
