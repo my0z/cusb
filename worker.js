@@ -1,6 +1,6 @@
 /**
  * 영지의 개인 대시보드 - Cloudflare Workers 버전
- * 마지막 수정: 2026-11-22 19:58 (KST)
+ * 마지막 수정: 2026-11-22 20:00 (KST)
  *
  * PHP curl_multi + 파일캐시 -> Workers Promise.allSettled + fetch(cf.cacheTtl) 로 포팅.
  * - 모든 외부 요청은 Promise.allSettled로 완전 병렬 실행 (한 사이트 지연이 전체를 막지 않음)
@@ -682,7 +682,7 @@ async function maybeSummarizeHotTopics(env) {
 ${indexedList}`;
 
   try {
-    const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8', { // 작성 2026-11-22 19:58 KST: 70b에서 8b로 변경 (neuron 절약)
+    const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', { // 작성 2026-11-22 20:00 KST: 70b에서 8b로 변경 (neuron 절약, fp8은 11-20 폐기라 기본 8b 사용)
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 1000,
     });
@@ -850,7 +850,7 @@ async function maybeGenerateMoneyKeywords(env) {
 ${titles.join('\n')}`;
 
   try {
-    const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8', { // 작성 2026-11-22 19:58 KST: 70b에서 8b로 변경 (neuron 절약)
+    const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', { // 작성 2026-11-22 20:00 KST: 70b에서 8b로 변경 (neuron 절약, fp8은 11-20 폐기라 기본 8b 사용)
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 1500,
     });
